@@ -155,22 +155,101 @@ public class ReviewServiceTest {
                 .approvalCount(2)
                 .approved(false)
                 .build();
-        
+
         // when
         Review updatedReview = reviewService.updateApprovalStatus(unapprovedReview);
-        
+
         // then
         assertFalse(updatedReview.approved());
-        
+
         // when
         Review approvedReview = unapprovedReview.toBuilder()
                 .approvalCount(approvalConfiguration.minCount())
                 .build();
-        
+
         // when
         updatedReview = reviewService.updateApprovalStatus(approvedReview);
-        
+
         // then
         assertTrue(updatedReview.approved());
+    }
+
+    @Test
+    void upsertNewReview() {
+        //given
+        Review review = TestFixtures.getReviewFixtures().getFirst().toBuilder()
+                .id(null)
+                .build();
+        when(posDataService.getById(review.pos().getId())).thenReturn(review.pos());
+        when(reviewDataService.filter(review.pos(), review.author())).thenReturn(List.of());
+        when(reviewDataService.upsert(review)).thenReturn(review.toBuilder().id(42L).build());
+
+        //when
+        Review result = reviewService.upsert(review);
+
+        //then
+        assertNotNull(result.getId());
+        assertThat(result.getId()).isEqualTo(42L);
+        verify(reviewDataService).upsert(review);
+    }
+
+    @Test
+    void approveIncrementsCountOfAlreadyApprovedReview() {
+        //given
+        Review review = TestFixtures.getReviewFixtures().getFirst().toBuilder()
+                .approvalCount(approvalConfiguration.minCount())
+                .approved(true)
+                .build();
+        User user = TestFixtures.getUserFixtures().getLast();
+        when(userDataService.getById(user.getId())).thenReturn(user);
+        when(reviewDataService.getById(review.getId())).thenReturn(review);
+        when(reviewDataService.upsert(any(Review.class)))
+                .thenAnswer(i -> i.getArgument(0));
+
+        //when
+        Review result = reviewService.approve(review, user.getId());
+
+        //then
+        assertTrue(result.approved());
+        assertThat(result.approvalCount()).isEqualTo(approvalConfiguration.minCount() +1);
+    }
+
+    @Test
+    void filterReturnUnapprovedReviews() {
+        // given
+        Pos pos = TestFixtures.getPosFixtures().getFirst();
+        List<Review> reviews = TestFixtures.getReviewFixtures()
+                .stream()
+                .map(review -> review.toBuilder().pos(pos).approved(false).build())
+                .toList();
+        when(posDataService.getById(pos.getId())).thenReturn(pos);
+        when(reviewDataService.filter(pos, false)).thenReturn(reviews);
+
+        // when
+        List<Review> result = reviewService.filter(pos.getId(), false);
+
+        // then
+        assertThat(result).allMatch(review -> !review.approved());
+    }
+
+    @Test
+    void approveReviewReachesThreshold() {
+        //given
+        Review review = TestFixtures.getReviewFixtures().getFirst().toBuilder()
+                .approvalCount(approvalConfiguration.minCount() -1)
+                .approved(false)
+                .build();
+        User user = TestFixtures.getUserFixtures().getLast();
+        when(userDataService.getById(user.getId())).thenReturn(user);
+        when(reviewDataService.getById(review.getId())).thenReturn(review);
+        when(reviewDataService.upsert(any(Review.class)))
+                .thenAnswer(i -> i.getArgument(0));
+
+        //when
+        Review result = reviewService.approve(review, user.getId());
+
+        //then
+        assertTrue(result.approved());
+        assertThat(result.approvalCount()).isEqualTo(approvalConfiguration.minCount());
     }
 }
